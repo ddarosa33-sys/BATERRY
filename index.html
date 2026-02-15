@@ -3,192 +3,168 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Power BT Pro - Real Hardware</title>
+    <title>Power BT Ultra - Hardware Link</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #020617; color: white; margin: 0; overflow: hidden; }
-        .battery-fill { transition: width 1.2s cubic-bezier(0.34, 1.56, 0.64, 1); }
-        @keyframes scan { 0% { transform: translateY(-100%); } 100% { transform: translateY(100%); } }
-        .scan-line { animation: scan 2s linear infinite; background: linear-gradient(to bottom, transparent, #6366f1, transparent); height: 50%; width: 100%; position: absolute; opacity: 0.3; }
-        .neon-border { box-shadow: 0 0 15px rgba(99, 102, 241, 0.4); }
+        body { font-family: 'Inter', sans-serif; background: #000; color: white; margin: 0; overflow: hidden; }
+        .battery-anim { transition: width 1s ease-in-out; }
+        .shimmer { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); background-size: 200% 100%; animation: shimmer 2s infinite; }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect } = React;
 
         const Icons = {
-            Bluetooth: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>,
-            BatteryFull: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>,
-            Alert: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>,
-            Loader: () => <svg className="animate-spin" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            BT: () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>,
+            Zap: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>,
+            Error: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         };
 
         function App() {
-            const [device, setDevice] = useState(null);
-            const [battery, setBattery] = useState(null);
-            const [isConnecting, setIsConnecting] = useState(false);
-            const [error, setError] = useState(null);
+            const [state, setState] = useState({
+                device: null,
+                battery: null,
+                loading: false,
+                error: null,
+                logs: "Listo para vincular"
+            });
+
+            const log = (msg) => {
+                console.log(msg);
+                setState(prev => ({ ...prev, logs: msg }));
+            };
 
             const connect = async () => {
-                setIsConnecting(true);
-                setError(null);
+                setState(prev => ({ ...prev, loading: true, error: null }));
+                log("Abriendo selector de sistema...");
+
                 try {
-                    // Pedimos todos los dispositivos pero indicamos que queremos el servicio de batería
-                    const selectedDevice = await navigator.bluetooth.requestDevice({
+                    // Paso 1: Selección de dispositivo (Sin filtros para máxima visibilidad)
+                    const device = await navigator.bluetooth.requestDevice({
                         acceptAllDevices: true,
-                        optionalServices: ['battery_service']
+                        optionalServices: ['battery_service', 'device_information']
                     });
 
-                    const server = await selectedDevice.gatt.connect();
+                    log(`Conectando a: ${device.name || 'Dispositivo'}`);
                     
-                    // Pequeña pausa para asegurar que el servidor GATT esté listo
-                    await new Promise(r => setTimeout(r, 1000));
+                    // Paso 2: Conexión GATT con reintento
+                    const server = await device.gatt.connect();
+                    log("Servidor GATT conectado. Buscando servicios...");
+
+                    // Espera necesaria para algunos firmwares de parlantes
+                    await new Promise(r => setTimeout(r, 1200));
 
                     try {
                         const service = await server.getPrimaryService('battery_service');
                         const characteristic = await service.getCharacteristic('battery_level');
                         
-                        // Leer valor inicial forzando la lectura
+                        log("Leyendo batería...");
                         const value = await characteristic.readValue();
                         const level = value.getUint8(0);
-                        setBattery(level);
 
-                        // Suscribirse a cambios futuros
+                        setState(prev => ({ ...prev, device, battery: level, loading: false }));
+                        log("Sincronización completa");
+
+                        // Suscribir a cambios
                         await characteristic.startNotifications();
-                        characteristic.addEventListener('characteristicvaluechanged', (event) => {
-                            const newLevel = event.target.value.getUint8(0);
-                            setBattery(newLevel);
+                        characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                            setState(prev => ({ ...prev, battery: e.target.value.getUint8(0) }));
                         });
 
                     } catch (serviceErr) {
-                        console.warn("Servicio de batería no encontrado o bloqueado:", serviceErr);
-                        setBattery("N/A"); // Dispositivo no reporta batería
+                        log("El parlante no reporta nivel de batería estándar.");
+                        setState(prev => ({ ...prev, device, battery: "N/A", loading: false }));
                     }
 
-                    setDevice(selectedDevice);
-                    selectedDevice.addEventListener('gattserverdisconnected', () => {
-                        setDevice(null);
-                        setBattery(null);
-                        setError("Conexión perdida.");
+                    device.addEventListener('gattserverdisconnected', () => {
+                        setState({ device: null, battery: null, loading: false, error: "Conexión cerrada", logs: "Desconectado" });
                     });
 
                 } catch (err) {
-                    setError("Error: " + err.message);
-                } finally {
-                    setIsConnecting(false);
+                    console.error(err);
+                    setState(prev => ({ ...prev, loading: false, error: "Error de conexión: Verifica si el parlante ya está conectado a otro equipo." }));
+                    log("Error de enlace físico.");
                 }
             };
 
             return (
-                <div className="min-h-screen bg-slate-950 flex flex-col max-w-md mx-auto relative overflow-hidden border-x border-slate-900 shadow-2xl">
-                    
-                    {/* UI Header */}
-                    <header className="p-8 pt-16 relative z-10">
-                        <div className="flex justify-between items-center">
-                            <div>
-                                <h1 className="text-3xl font-black tracking-tighter italic uppercase flex items-center gap-2">
-                                    <Icons.Bluetooth /> Power Pro
-                                </h1>
-                                <p className="text-[10px] font-black text-indigo-500 tracking-[0.4em] uppercase mt-1">Direct Hardware Link</p>
-                            </div>
+                <div className="min-h-screen bg-black flex flex-col max-w-md mx-auto border-x border-white/5 shadow-2xl relative">
+                    <header className="p-8 pt-16">
+                        <h1 className="text-3xl font-black italic tracking-tighter uppercase flex items-center gap-2">
+                            <Icons.BT /> Power BT
+                        </h1>
+                        <div className="flex items-center gap-2 mt-2">
+                            <div className={`w-1.5 h-1.5 rounded-full ${state.device ? 'bg-emerald-500 animate-pulse' : 'bg-white/20'}`}></div>
+                            <span className="text-[9px] font-bold text-white/40 uppercase tracking-[0.3em]">{state.logs}</span>
                         </div>
                     </header>
 
-                    <main className="flex-1 px-8 flex flex-col justify-center relative z-10">
-                        {error && (
-                            <div className="mb-6 bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3 animate-pulse">
-                                <Icons.Alert />
-                                <span className="text-[11px] font-bold text-rose-200 uppercase tracking-tight">{error}</span>
+                    <main className="flex-1 px-8 flex flex-col justify-center">
+                        {state.error && (
+                            <div className="mb-8 bg-rose-500/10 border border-rose-500/20 p-4 rounded-2xl flex items-center gap-3">
+                                <Icons.Error />
+                                <span className="text-[11px] font-bold text-rose-400 uppercase leading-tight">{state.error}</span>
                             </div>
                         )}
 
-                        {!device ? (
+                        {!state.device ? (
                             <div className="text-center space-y-10">
-                                <div className="relative w-32 h-32 mx-auto">
-                                    <div className="absolute inset-0 bg-indigo-600/20 rounded-full blur-2xl"></div>
-                                    <div className="relative w-full h-full bg-slate-900 rounded-full flex items-center justify-center border border-white/10 overflow-hidden">
-                                        <Icons.Bluetooth />
-                                        <div className="scan-line"></div>
-                                    </div>
-                                </div>
-                                <div className="space-y-3">
-                                    <h2 className="text-2xl font-black">Conectar Parlante</h2>
-                                    <p className="text-slate-500 text-sm font-medium px-6 leading-relaxed">
-                                        Selecciona tu dispositivo Bluetooth para obtener el nivel de carga en tiempo real.
-                                    </p>
+                                <div className="w-32 h-32 mx-auto bg-white/5 rounded-full flex items-center justify-center border border-white/10 relative overflow-hidden">
+                                    <Icons.BT />
+                                    {state.loading && <div className="absolute inset-0 shimmer"></div>}
                                 </div>
                                 <button 
                                     onClick={connect}
-                                    disabled={isConnecting}
-                                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-5 rounded-3xl transition-all active:scale-95 flex items-center justify-center gap-3 shadow-xl shadow-indigo-900/30"
+                                    disabled={state.loading}
+                                    className="w-full bg-white text-black font-black py-6 rounded-[2rem] active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                                 >
-                                    {isConnecting ? <Icons.Loader /> : <Icons.Bluetooth />}
-                                    {isConnecting ? "VINCULANDO..." : "VINCULAR AHORA"}
+                                    {state.loading ? "CONECTANDO..." : "VINCULAR PARLANTE"}
                                 </button>
+                                <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest px-8 leading-loose">
+                                    Asegúrate de que el parlante no esté en uso por otra app.
+                                </p>
                             </div>
                         ) : (
-                            <div className="space-y-8 animate-in fade-in zoom-in-95 duration-500">
-                                <div className="bg-slate-900/80 border border-white/5 p-10 rounded-[3.5rem] relative neon-border overflow-hidden">
-                                    <div className="flex justify-between items-start mb-12">
-                                        <div>
-                                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Activo</p>
-                                            <h3 className="text-3xl font-black tracking-tight">{device.name || "Bluetooth Audio"}</h3>
-                                        </div>
-                                        <div className="p-3 bg-white/5 rounded-2xl text-slate-400">
-                                            <Icons.BatteryFull />
-                                        </div>
+                            <div className="bg-white/5 border border-white/10 p-10 rounded-[3rem] animate-in zoom-in-95">
+                                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-2">Hardware Conectado</p>
+                                <h2 className="text-4xl font-black tracking-tighter mb-12 truncate">{state.device.name || "Parlante"}</h2>
+                                
+                                <div className="space-y-6">
+                                    <div className="flex items-baseline gap-2">
+                                        <span className="text-8xl font-black tracking-tighter tabular-nums">
+                                            {state.battery === "N/A" ? "--" : (state.battery ?? "0")}
+                                        </span>
+                                        <span className="text-2xl font-bold text-white/30">%</span>
                                     </div>
-
-                                    <div className="space-y-6">
-                                        <div className="flex items-baseline gap-2">
-                                            <span className="text-8xl font-black tracking-tighter tabular-nums">
-                                                {battery === "N/A" ? "--" : (battery ?? "0")}
-                                            </span>
-                                            <span className="text-2xl font-bold text-slate-600">%</span>
-                                        </div>
-
-                                        <div className="relative h-4 bg-black/40 rounded-full p-1 border border-white/5">
-                                            <div 
-                                                className={`h-full rounded-full battery-fill ${battery < 20 ? 'bg-rose-500 shadow-[0_0_15px_#f43f5e]' : 'bg-indigo-500 shadow-[0_0_15px_#6366f1]'}`}
-                                                style={{ width: `${(battery && battery !== "N/A") ? battery : 0}%` }}
-                                            />
-                                        </div>
-                                        
-                                        {battery === "N/A" && (
-                                            <div className="flex items-center gap-2 justify-center py-2 bg-amber-500/5 rounded-xl border border-amber-500/10">
-                                                <Icons.Alert />
-                                                <p className="text-[9px] font-bold text-amber-500 uppercase tracking-tighter">
-                                                    Info de batería no disponible
-                                                </p>
-                                            </div>
-                                        )}
+                                    <div className="h-3 bg-white/5 rounded-full p-0.5">
+                                        <div 
+                                            className="h-full bg-indigo-500 rounded-full battery-anim shadow-[0_0_20px_rgba(99,102,241,0.4)]"
+                                            style={{ width: `${(state.battery && state.battery !== "N/A") ? state.battery : 0}%` }}
+                                        ></div>
                                     </div>
                                 </div>
-
+                                
                                 <button 
-                                    onClick={() => device.gatt.disconnect()}
-                                    className="w-full py-4 text-slate-600 text-[10px] font-black uppercase tracking-[0.4em] hover:text-rose-500 transition-colors"
+                                    onClick={() => state.device.gatt.disconnect()}
+                                    className="mt-12 w-full text-[9px] font-black text-white/20 uppercase tracking-[0.5em] hover:text-rose-500"
                                 >
-                                    Cerrar Conexión
+                                    Desconectar
                                 </button>
                             </div>
                         )}
                     </main>
 
-                    <footer className="p-10 border-t border-white/5 bg-slate-950 flex flex-col items-center gap-4">
-                        <div className="flex gap-4">
-                           <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
-                           <div className="w-1.5 h-1.5 bg-slate-800 rounded-full"></div>
-                           <div className="w-1.5 h-1.5 bg-slate-800 rounded-full"></div>
-                        </div>
-                        <p className="text-[8px] font-black text-slate-700 uppercase tracking-[0.5em]">System Production Stable</p>
+                    <footer className="p-10 flex flex-col items-center gap-2">
+                        <Icons.Zap />
+                        <span className="text-[8px] font-black text-white/20 uppercase tracking-[0.4em]">Web Bluetooth v2.0 Standard</span>
                     </footer>
                 </div>
             );
