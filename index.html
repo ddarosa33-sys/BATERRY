@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Power BT - Real Time Monitor</title>
+    <title>Power BT - Real Monitor</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -11,11 +11,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #020617; color: white; margin: 0; overflow: hidden; }
-        .battery-gradient { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
-        .status-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-        .charging-animation { animation: slide 1.5s infinite linear; background: linear-gradient(90deg, transparent, rgba(52, 211, 153, 0.5), transparent); width: 100%; height: 100%; position: absolute; }
-        @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+        .battery-bar { transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
+        .glow-indigo { box-shadow: 0 0 20px rgba(79, 70, 229, 0.3); }
+        @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .anim-pulse { animation: pulse-soft 2s infinite; }
     </style>
 </head>
 <body>
@@ -26,187 +25,152 @@
 
         const Icons = {
             Bluetooth: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>,
-            Battery: ({lvl}) => (
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={lvl < 20 ? "#ef4444" : "#94a3b8"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>
-            ),
-            Charging: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#10b981" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m11 7-3 5h4l-3 5"/><path d="M15 7h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1"/><path d="M6 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/></svg>,
-            Alert: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            Battery: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="10" x="2" y="7" rx="2" ry="2"/><line x1="22" x2="22" y1="11" y2="13"/></svg>,
+            Refresh: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>,
+            Speaker: () => <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><circle cx="12" cy="14" r="4"/><line x1="12" x2="12.01" y1="6" y2="6"/></svg>
         };
 
         function App() {
-            const [device, setDevice] = useState(null);
-            const [batteryLevel, setBatteryLevel] = useState(null);
-            const [isCharging, setIsCharging] = useState(false);
-            const [error, setError] = useState(null);
+            const [btDevice, setBtDevice] = useState(null);
+            const [battery, setBattery] = useState(null);
             const [loading, setLoading] = useState(false);
+            const [error, setError] = useState("");
 
-            // Intentar conectar con un dispositivo real
-            const connectBluetooth = async () => {
+            const requestDevice = async () => {
                 setLoading(true);
-                setError(null);
+                setError("");
                 try {
-                    // 1. Solicitar dispositivo que tenga el servicio de batería
-                    const selectedDevice = await navigator.bluetooth.requestDevice({
-                        filters: [{ services: ['battery_service'] }],
-                        optionalServices: ['device_information']
+                    // Cambio clave: acceptAllDevices para que aparezca la lista completa de bluetooths
+                    const device = await navigator.bluetooth.requestDevice({
+                        acceptAllDevices: true,
+                        optionalServices: ['battery_service'] // Servicio para leer la batería
                     });
 
-                    // 2. Conectar al servidor GATT
-                    const server = await selectedDevice.gatt.connect();
+                    setBtDevice(device);
                     
-                    // 3. Obtener el servicio de batería
-                    const service = await server.getPrimaryService('battery_service');
+                    const server = await device.gatt.connect();
                     
-                    // 4. Obtener la característica del nivel de batería
-                    const characteristic = await service.getCharacteristic('battery_level');
+                    try {
+                        const service = await server.getPrimaryService('battery_service');
+                        const characteristic = await service.getCharacteristic('battery_level');
+                        
+                        // Leer valor inicial
+                        const value = await characteristic.readValue();
+                        setBattery(value.getUint8(0));
 
-                    // Guardar referencia del dispositivo
-                    setDevice(selectedDevice);
-                    
-                    // Leer valor inicial
-                    const value = await characteristic.readValue();
-                    const initialBattery = value.getUint8(0);
-                    setBatteryLevel(initialBattery);
+                        // Escuchar cambios en vivo
+                        await characteristic.startNotifications();
+                        characteristic.addEventListener('characteristicvaluechanged', (e) => {
+                            setBattery(e.target.value.getUint8(0));
+                        });
+                    } catch (e) {
+                        // Si el parlante no deja leer la batería, al menos mostramos que está conectado
+                        setBattery("N/A");
+                        console.log("El dispositivo no soporta lectura de batería estándar.");
+                    }
 
-                    // Suscribirse a cambios (en vivo)
-                    await characteristic.startNotifications();
-                    characteristic.addEventListener('characteristicvaluechanged', (event) => {
-                        const level = event.target.value.getUint8(0);
-                        setBatteryLevel(level);
-                        // La mayoría de los dispositivos BT reportan carga si el nivel sube o vía flags específicos
-                        // Nota: La detección de "Charging" real depende de si el firmware lo expone
-                    });
-
-                    selectedDevice.addEventListener('gattserverdisconnected', () => {
-                        setDevice(null);
-                        setBatteryLevel(null);
-                        setError("Dispositivo desconectado.");
+                    device.addEventListener('gattserverdisconnected', () => {
+                        setBtDevice(null);
+                        setBattery(null);
                     });
 
                 } catch (err) {
-                    console.error(err);
-                    setError(err.name === 'NotFoundError' ? "Cancelaste la búsqueda." : "Tu navegador o dispositivo no soporta esta función.");
+                    setError("No se pudo conectar: " + err.message);
                 } finally {
                     setLoading(false);
                 }
             };
 
             return (
-                <div className="min-h-screen bg-slate-950 flex flex-col max-w-md mx-auto border-x border-slate-900 overflow-hidden relative">
+                <div className="min-h-screen bg-slate-950 flex flex-col max-w-md mx-auto border-x border-slate-900 shadow-2xl overflow-hidden">
                     
-                    {/* Background Decor */}
-                    <div className="absolute top-[-10%] left-[-10%] w-64 h-64 bg-indigo-600/10 blur-[100px] rounded-full"></div>
-
-                    <header className="p-8 pt-12 z-10">
-                        <div className="flex justify-between items-center">
-                            <div>
-                                <h1 className="text-2xl font-black tracking-tighter italic uppercase flex items-center gap-2">
-                                    <Icons.Bluetooth /> Power BT
-                                </h1>
-                                <p className="text-[10px] font-black text-indigo-400 tracking-widest uppercase mt-1">
-                                    {device ? "Conectado por Hardware" : "Esperando conexión..."}
-                                </p>
-                            </div>
-                        </div>
+                    <header className="p-8 pt-12">
+                        <h1 className="text-2xl font-black italic tracking-tighter uppercase flex items-center gap-2">
+                            <Icons.Bluetooth /> Power BT
+                        </h1>
+                        <p className="text-[10px] font-black text-indigo-400 tracking-[0.3em] uppercase mt-1">Real-Time Hardware Monitor</p>
                     </header>
 
-                    <main className="flex-1 px-8 space-y-8 z-10">
+                    <main className="flex-1 px-8 flex flex-col justify-center pb-20">
                         {error && (
-                            <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top">
-                                <Icons.Alert />
-                                <p className="text-xs text-amber-200 font-medium leading-tight">{error}</p>
+                            <div className="mb-6 bg-red-500/10 border border-red-500/20 p-4 rounded-2xl text-[11px] text-red-400 font-bold uppercase text-center">
+                                {error}
                             </div>
                         )}
 
-                        {!device ? (
-                            <div className="flex flex-col items-center justify-center py-20 text-center space-y-6">
-                                <div className="w-24 h-24 bg-slate-900 rounded-full flex items-center justify-center border border-slate-800 shadow-2xl">
+                        {!btDevice ? (
+                            <div className="text-center space-y-8">
+                                <div className="w-24 h-24 bg-slate-900 rounded-full flex items-center justify-center mx-auto border border-white/5 glow-indigo">
                                     <Icons.Bluetooth />
                                 </div>
                                 <div className="space-y-2">
-                                    <h2 className="text-xl font-bold">Sin Dispositivo</h2>
-                                    <p className="text-sm text-slate-500 px-6">Para ver la batería real, presiona el botón y selecciona tu parlante de la lista.</p>
+                                    <h2 className="text-xl font-black">Buscar Parlantes</h2>
+                                    <p className="text-slate-500 text-sm font-medium leading-relaxed px-4">
+                                        Haz clic abajo para abrir la lista del sistema y seleccionar tu dispositivo conectado.
+                                    </p>
                                 </div>
                                 <button 
-                                    onClick={connectBluetooth}
+                                    onClick={requestDevice}
                                     disabled={loading}
-                                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 px-8 rounded-full shadow-lg shadow-indigo-900/40 transition-all active:scale-95 disabled:opacity-50"
+                                    className="w-full bg-white text-black font-black py-5 rounded-[2rem] active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
                                 >
-                                    {loading ? "ESCANEANDO..." : "CONECTAR REAL"}
+                                    {loading ? <Icons.Refresh /> : "ABRIR LISTA BLUETOOTH"}
                                 </button>
                             </div>
                         ) : (
-                            <div className="space-y-8 animate-in zoom-in-95 duration-300">
-                                {/* Card del Dispositivo Real */}
-                                <div className="bg-slate-900/80 border border-slate-800 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden">
-                                    <div className="flex justify-between items-start mb-10 relative z-10">
-                                        <div>
-                                            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-2 block">Hardware ID: {device.id.slice(0,8)}</span>
-                                            <h3 className="text-3xl font-black text-white tracking-tight leading-none">{device.name}</h3>
-                                        </div>
-                                        <div className="bg-emerald-500/20 p-2 rounded-xl border border-emerald-500/30">
-                                            <Icons.BatteryCharging className="text-emerald-400" />
+                            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
+                                <div className="bg-slate-900 border border-white/5 p-8 rounded-[3rem] relative overflow-hidden">
+                                    <div className="flex justify-between items-start mb-12">
+                                        <div className="flex gap-4 items-center">
+                                            <div className="p-4 bg-indigo-600 text-white rounded-3xl">
+                                                <Icons.Speaker />
+                                            </div>
+                                            <div>
+                                                <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1">Conectado</p>
+                                                <h3 className="text-2xl font-black tracking-tight">{btDevice.name || "Sin nombre"}</h3>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-6 relative z-10">
+                                    <div className="space-y-4">
                                         <div className="flex justify-between items-end">
                                             <div className="flex items-baseline gap-1">
-                                                <span className="text-6xl font-black tracking-tighter">{batteryLevel ?? "--"}</span>
-                                                <span className="text-xl font-bold text-slate-500">%</span>
+                                                <span className="text-7xl font-black tracking-tighter">
+                                                    {battery === "N/A" ? "--" : (battery ?? "0")}
+                                                </span>
+                                                <span className="text-2xl font-bold text-slate-600">%</span>
                                             </div>
-                                            {batteryLevel < 20 && (
-                                                <span className="text-[10px] font-black text-red-500 uppercase animate-pulse">Batería Baja</span>
-                                            )}
+                                            <Icons.Battery />
                                         </div>
 
-                                        {/* Barra de progreso Real */}
-                                        <div className="relative w-full h-4 bg-slate-950 rounded-full overflow-hidden border border-white/5 shadow-inner">
+                                        <div className="h-4 bg-black rounded-full p-1 border border-white/5">
                                             <div 
-                                                className={`h-full battery-gradient rounded-full ${batteryLevel < 20 ? 'bg-red-500' : 'bg-indigo-500'}`}
-                                                style={{ width: `${batteryLevel || 0}%` }}
-                                            >
-                                                {isCharging && <div className="charging-animation"></div>}
-                                            </div>
+                                                className={`h-full rounded-full battery-bar ${battery < 20 ? 'bg-red-500' : 'bg-indigo-500'}`}
+                                                style={{ width: `${battery && battery !== "N/A" ? battery : 0}%` }}
+                                            ></div>
                                         </div>
+                                        
+                                        {battery === "N/A" && (
+                                            <p className="text-[9px] text-slate-500 font-bold uppercase text-center mt-2">
+                                                El dispositivo no comparte info de batería
+                                            </p>
+                                        )}
                                     </div>
-                                    
-                                    {/* Decoración de fondo de la tarjeta */}
-                                    <div className="absolute bottom-[-20%] right-[-10%] w-40 h-40 bg-indigo-600/5 blur-[50px] rounded-full"></div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="bg-slate-900/50 p-5 rounded-3xl border border-slate-800">
-                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">Estado</p>
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                                            <span className="text-xs font-bold">Transmitiendo</span>
-                                        </div>
-                                    </div>
-                                    <div className="bg-slate-900/50 p-5 rounded-3xl border border-slate-800">
-                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">Protocolo</p>
-                                        <span className="text-xs font-bold uppercase tracking-tighter text-indigo-400">GATT / BLE 5.0</span>
-                                    </div>
-                                </div>
-                                
                                 <button 
-                                    onClick={() => { device.gatt.disconnect(); setDevice(null); }}
-                                    className="w-full py-4 text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] hover:text-red-500 transition-colors"
+                                    onClick={() => btDevice.gatt.disconnect()}
+                                    className="w-full py-4 text-slate-600 text-[10px] font-black uppercase tracking-[0.4em] hover:text-white transition-colors"
                                 >
-                                    Desconectar Dispositivo
+                                    Desconectar
                                 </button>
                             </div>
                         )}
                     </main>
 
-                    {/* Footer Nav */}
-                    <footer className="p-8 flex justify-center border-t border-slate-900 bg-slate-950/80 backdrop-blur-xl">
-                        <div className="flex items-center gap-8 text-slate-600">
-                            <div className="p-2"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h.01"/><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/></svg></div>
-                            <div className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-xl shadow-indigo-900/20 active:scale-90 transition-transform cursor-pointer" onClick={connectBluetooth}>
-                                <Icons.Bluetooth />
-                            </div>
-                            <div className="p-2"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></div>
+                    <footer className="p-10 border-t border-white/5 bg-slate-950 flex justify-center">
+                        <div className="text-[9px] font-black text-slate-700 uppercase tracking-widest anim-pulse">
+                            Hardware Link Active
                         </div>
                     </footer>
                 </div>
